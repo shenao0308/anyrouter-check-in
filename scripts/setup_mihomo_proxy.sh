@@ -36,8 +36,14 @@ gunzip -f "${ARCHIVE}"
 chmod +x "mihomo-linux-amd64-${MIHOMO_VERSION}"
 MIHOMO_BIN="${PROXY_DIR}/mihomo-linux-amd64-${MIHOMO_VERSION}"
 
-cat > config.yaml <<EOF
-mixed-port: ${PROXY_PORT}
+python3 -c '
+import os, json
+
+proxy_port = os.getenv("PROXY_PORT", "7890")
+sub_url = os.getenv("PROXY_SUBSCRIPTION_URL", "")
+test_url = os.getenv("PROXY_TEST_URL", "https://www.google.com/generate_204")
+
+config_content = f"""mixed-port: {proxy_port}
 allow-lan: false
 ipv6: false
 mode: rule
@@ -47,7 +53,7 @@ unified-delay: true
 proxy-providers:
   subscription:
     type: http
-    url: "${PROXY_SUBSCRIPTION_URL}"
+    url: {json.dumps(sub_url)}
     interval: 3600
     path: ./subscription.yaml
     health-check:
@@ -58,7 +64,7 @@ proxy-providers:
 proxy-groups:
   - name: CHECKIN
     type: url-test
-    url: "${PROXY_TEST_URL}"
+    url: {json.dumps(test_url)}
     interval: 300
     tolerance: 150
     lazy: false
@@ -67,7 +73,10 @@ proxy-groups:
 
 rules:
   - MATCH,CHECKIN
-EOF
+"""
+with open("config.yaml", "w", encoding="utf-8") as f:
+    f.write(config_content)
+'
 
 echo "[INFO] Starting mihomo on 127.0.0.1:${PROXY_PORT}..."
 nohup "${MIHOMO_BIN}" -d "${PROXY_DIR}" -f config.yaml > mihomo.log 2>&1 &

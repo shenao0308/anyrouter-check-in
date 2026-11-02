@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 
 def get_proxy_server(*, use_proxy: bool = True) -> str | None:
@@ -21,10 +21,11 @@ def get_playwright_proxy(*, use_proxy: bool = True) -> dict[str, str] | None:
 	parsed = urlparse(server)
 	# 显式拆解 username 和 password 喂给 Playwright
 	if parsed.username and parsed.password:
-		clean_server = f"{parsed.scheme}://{parsed.hostname}:{parsed.port}"
+		port_part = f':{parsed.port}' if parsed.port is not None else ''
+		clean_server = f'{parsed.scheme}://{parsed.hostname}{port_part}'
 		return {
 			'server': clean_server,
-			'username': parsed.username,
-			'password': parsed.password,
+			'username': unquote(parsed.username),
+			'password': unquote(parsed.password),
 		}
 	return {'server': server}
