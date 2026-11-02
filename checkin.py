@@ -575,6 +575,11 @@ async def main():
 			notification_content.append(f'[FAIL] {account_name} exception: {str(e)[:50]}...')
 
 	current_balance_hash = generate_balance_hash(current_balances) if current_balances else None
+	notify_always_str = os.getenv('NOTIFY_ALWAYS', 'false').strip().lower()
+	notify_always = notify_always_str in ('true', '1', 'yes', 'on')
+	if notify_always:
+		print('[NOTIFY] NOTIFY_ALWAYS is enabled, will force notification on every run')
+
 	if current_balance_hash:
 		if last_balance_hash is None:
 			balance_changed = True
@@ -587,7 +592,7 @@ async def main():
 		else:
 			print('[INFO] No balance changes detected')
 
-	if balance_changed:
+	if balance_changed or notify_always:
 		for i, account in enumerate(accounts):
 			account_key = f'account_{i + 1}'
 			if account_key in account_check_in_details:
@@ -596,11 +601,15 @@ async def main():
 				account_result = format_check_in_notification(detail)
 				if not any(account_name in item for item in notification_content):
 					notification_content.append(account_result)
+			else:
+				account_name = account.get_display_name(i)
+				if not any(account_name in item for item in notification_content):
+					notification_content.append(f'[SUCCESS] {account_name}')
 
 	if current_balance_hash:
 		save_balance_hash(current_balance_hash)
 
-	if need_notify and notification_content:
+	if (need_notify or notify_always) and notification_content:
 		summary = [
 			'[STATS] Check-in result statistics:',
 			f'[SUCCESS] Success: {success_count}/{total_count}',

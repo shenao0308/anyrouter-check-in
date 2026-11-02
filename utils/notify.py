@@ -26,6 +26,7 @@ class NotificationKit:
 		self.telegram_chat_id = os.getenv('TELEGRAM_CHAT_ID')
 		self.bark_key = os.getenv('BARK_KEY')
 		self.bark_server = os.getenv('BARK_SERVER', 'https://api.day.app')
+		self.discord_webhook = os.getenv('DISCORD_WEBHOOK')
 
 	def _post_json(self, service: str, url: str, data: dict[str, Any]) -> httpx.Response:
 		with httpx.Client(timeout=30.0) as client:
@@ -157,6 +158,22 @@ class NotificationKit:
 
 		self._post_json('Bark', url, data)
 
+	def send_discord(self, title: str, content: str):
+		if not self.discord_webhook:
+			raise ValueError('Discord Webhook not configured')
+
+		data = {
+			'username': 'AnyRouter Check-in',
+			'embeds': [
+				{
+					'title': title[:256],
+					'description': content[:4000],
+					'color': 0x5865F2,
+				}
+			],
+		}
+		self._post_json('Discord', self.discord_webhook, data)
+
 	def push_message(self, title: str, content: str, msg_type: Literal['text', 'html'] = 'text'):
 		notifications = [
 			('Email', lambda: self.send_email(title, content, msg_type)),
@@ -168,6 +185,7 @@ class NotificationKit:
 			('Gotify', lambda: self.send_gotify(title, content)),
 			('Telegram', lambda: self.send_telegram(title, content)),
 			('Bark', lambda: self.send_bark(title, content)),
+			('Discord', lambda: self.send_discord(title, content)),
 		]
 
 		for name, func in notifications:

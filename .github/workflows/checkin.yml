@@ -114,6 +114,8 @@ jobs:
         GOTIFY_PRIORITY: ${{ secrets.GOTIFY_PRIORITY }}
         BARK_KEY: ${{ secrets.BARK_KEY }}
         BARK_SERVER: ${{ secrets.BARK_SERVER }}
+        DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        NOTIFY_ALWAYS: ${{ vars.NOTIFY_ALWAYS || secrets.NOTIFY_ALWAYS || 'true' }}
       run: |
         xvfb-run -a --server-args="-screen 0 1920x1080x24" uv run checkin.py
 

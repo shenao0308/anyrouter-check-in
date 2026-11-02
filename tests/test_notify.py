@@ -29,6 +29,7 @@ def notification_kit(monkeypatch):
 	monkeypatch.setenv('TELEGRAM_BOT_TOKEN', 'telegram_token')
 	monkeypatch.setenv('TELEGRAM_CHAT_ID', 'telegram_chat')
 	monkeypatch.setenv('BARK_KEY', 'bark_key')
+	monkeypatch.setenv('DISCORD_WEBHOOK', 'https://discord.com/api/webhooks/test/123')
 	return NotificationKit()
 
 
@@ -143,6 +144,19 @@ def test_http_json_error(notification_kit):
 			notification_kit.send_pushplus('测试', '测试')
 
 
+def test_send_discord(mock_httpx_client, notification_kit):
+	mock_client, mock_response = mock_httpx_client
+	mock_response.status_code = 204
+	mock_response.json.side_effect = ValueError('No JSON')
+
+	notification_kit.send_discord('测试标题', '测试内容')
+
+	mock_client.post.assert_called_once()
+	call_args = mock_client.post.call_args
+	assert call_args[0][0] == 'https://discord.com/api/webhooks/test/123'
+	assert 'embeds' in call_args[1]['json']
+
+
 def test_missing_config(monkeypatch):
 	monkeypatch.delenv('EMAIL_USER', raising=False)
 	monkeypatch.delenv('EMAIL_PASS', raising=False)
@@ -168,6 +182,7 @@ def test_push_message(notification_kit, monkeypatch):
 		'send_gotify',
 		'send_telegram',
 		'send_bark',
+		'send_discord',
 	]
 	mocks = {}
 	for method_name in send_methods:
