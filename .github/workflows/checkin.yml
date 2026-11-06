@@ -14,6 +14,7 @@ on:
 jobs:
   checkin:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment: production
     env:
       PYTHONIOENCODING: utf-8
@@ -44,11 +45,33 @@ jobs:
         uv sync --frozen
         echo "✅ 环境初始化完成"
 
+    - name: 缓存系统 APT 包
+      uses: actions/cache@v5
+      id: apt-cache
+      with:
+        path: ~/.apt-cache
+        key: ${{ runner.os }}-apt-v1
+        restore-keys: |
+          ${{ runner.os }}-apt-
+
     - name: 安装系统依赖
+      timeout-minutes: 4
       run: |
-        sudo apt-get update
-        sudo apt-get install -y xvfb fonts-noto-color-emoji fonts-freefont-ttf fonts-unifont \
+        sudo rm -f /etc/apt/apt.conf.d/docker-clean || true
+        mkdir -p ~/.apt-cache
+        if [ -d ~/.apt-cache ] && [ -n "$(ls -A ~/.apt-cache 2>/dev/null)" ]; then
+          echo "📦 从缓存恢复 apt deb 包..."
+          sudo cp -n ~/.apt-cache/*.deb /var/cache/apt/archives/ 2>/dev/null || true
+        fi
+        echo "🔄 更新 apt 索引（带超时防护）..."
+        sudo apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout="15" -o Acquire::https::Timeout="15" || true
+        echo "⬇️ 安装系统与字体依赖..."
+        sudo apt-get install -y --no-install-recommends \
+          -o Acquire::Retries=3 -o Acquire::http::Timeout="15" -o Acquire::https::Timeout="15" \
+          xvfb fonts-noto-color-emoji fonts-freefont-ttf fonts-unifont \
           fonts-ipafont-gothic fonts-wqy-zenhei fonts-tlwg-loma-otf
+        cp -n /var/cache/apt/archives/*.deb ~/.apt-cache/ 2>/dev/null || true
+        echo "✅ 系统依赖安装完成"
 
     - name: 缓存 CloakBrowser 二进制
       uses: actions/cache@v5
