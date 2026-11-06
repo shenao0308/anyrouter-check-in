@@ -41,6 +41,29 @@ from utils.proxy import get_playwright_proxy, get_proxy_server
 load_dotenv()
 
 BALANCE_HASH_FILE = 'balance_hash.txt'
+BALANCE_HISTORY_FILE = 'balance_history.json'
+
+
+def load_balance_history() -> dict:
+	"""加载历史余额快照"""
+	try:
+		if os.path.exists(BALANCE_HISTORY_FILE):
+			with open(BALANCE_HISTORY_FILE, 'r', encoding='utf-8') as f:
+				data = json.load(f)
+				if isinstance(data, dict):
+					return data
+	except Exception:  # nosec B110
+		pass
+	return {}
+
+
+def save_balance_history(history_data: dict) -> None:
+	"""保存历史余额快照"""
+	try:
+		with open(BALANCE_HISTORY_FILE, 'w', encoding='utf-8') as f:
+			json.dump(history_data, f, indent=2, ensure_ascii=False)
+	except Exception as e:
+		print(f'Warning: Failed to save balance history: {e}')
 
 
 def load_balance_hash():
@@ -317,35 +340,48 @@ def execute_check_in(client, account_name: str, provider_config, headers: dict):
 
 def format_check_in_notification(detail: dict) -> str:
 	"""格式化签到通知消息"""
-	lines = [
-		f'[CHECK-IN] {detail["name"]}',
-		'  ━━━━━━━━━━━━━━━━━━━━',
-		'  签到前',
-		f'     余额: ${detail["before_quota"]:.2f}  |  累计消耗: ${detail["before_used"]:.2f}',
-		'  签到后',
-		f'     余额: ${detail["after_quota"]:.2f}  |  累计消耗: ${detail["after_used"]:.2f}',
-	]
+	lines = [f'[CHECK-IN] {detail["name"]}']
 
-	has_reward = detail['check_in_reward'] != 0
-	has_usage = detail['usage_increase'] != 0
+	has_reward = detail.get('check_in_reward', 0) != 0
+	has_usage = detail.get('usage_increase', 0) != 0
+	needs_manual = detail.get('needs_manual_check_in', True)
 
-	if has_reward or has_usage:
-		lines.append('  ━━━━━━━━━━━━━━━━━━━━')
-
-		if not has_reward and has_usage:
-			lines.append('  今日已签到（期间有使用）')
-
-		if has_reward:
-			lines.append(f'  签到获得: +${detail["check_in_reward"]:.2f}')
-
+	if has_reward:
+		lines.extend([
+			'  ━━━━━━━━━━━━━━━━━━━━',
+			'  签到前',
+			f'     余额: ${detail["before_quota"]:.2f}  |  累计消耗: ${detail["before_used"]:.2f}',
+			'  签到后',
+			f'     余额: ${detail["after_quota"]:.2f}  |  累计消耗: ${detail["after_used"]:.2f}',
+			'  ━━━━━━━━━━━━━━━━━━━━',
+			f'  🎉 签到获得: +${detail["check_in_reward"]:.2f}',
+		])
 		if has_usage:
-			lines.append(f'  期间消耗: ${detail["usage_increase"]:.2f}')
-
-		if detail['balance_change'] != 0:
+			lines.append(f'  📉 期间消耗: ${detail["usage_increase"]:.2f}')
+		if detail.get('balance_change', 0) != 0:
+			change_symbol = '+' if detail['balance_change'] > 0 else ''
+			lines.append(f'  余额变化: {change_symbol}${detail["balance_change"]:.2f}')
+	elif has_usage:
+		lines.extend([
+			'  ━━━━━━━━━━━━━━━━━━━━',
+			f'  当前余额: ${detail["after_quota"]:.2f}  |  累计消耗: ${detail["after_used"]:.2f}',
+			'  ━━━━━━━━━━━━━━━━━━━━',
+			'  今日已签到（期间有使用）',
+			f'  📉 期间消耗: ${detail["usage_increase"]:.2f}',
+		])
+		if detail.get('balance_change', 0) != 0:
 			change_symbol = '+' if detail['balance_change'] > 0 else ''
 			lines.append(f'  余额变化: {change_symbol}${detail["balance_change"]:.2f}')
 	else:
-		lines.extend(['  ━━━━━━━━━━━━━━━━━━━━', '  今日已签到，无变化'])
+		lines.extend([
+			'  ━━━━━━━━━━━━━━━━━━━━',
+			f'  当前余额: ${detail["after_quota"]:.2f}  |  累计消耗: ${detail["after_used"]:.2f}',
+			'  ━━━━━━━━━━━━━━━━━━━━',
+		])
+		if not needs_manual:
+			lines.append('  ✅ 今日打卡已自动激活生效')
+		else:
+			lines.append('  ✅ 今日已签到，额度无变化')
 
 	return '\n'.join(lines)
 
@@ -504,6 +540,7 @@ async def main():
 	print(f'[INFO] Found {len(accounts)} account configurations')
 
 	last_balance_hash = load_balance_hash()
+	last_balance_history = load_balance_history()
 
 	success_count = 0
 	total_count = len(accounts)
@@ -532,31 +569,72 @@ async def main():
 				current_quota = user_info_after['quota']
 				current_used = user_info_after['used_quota']
 				current_balances[account_key] = {'quota': current_quota, 'used': current_used}
+				account_name = account.get_display_name(i)
+				provider_config = app_config.get_provider(account.provider)
 
+				# 优先检查本次调用执行内的即时变化
+				immediate_reward = 0.0
+				immediate_usage = 0.0
+				immediate_change = 0.0
 				if user_info_before and user_info_before.get('success'):
-					before_quota = user_info_before['quota']
-					before_used = user_info_before['used_quota']
-					after_quota = user_info_after['quota']
-					after_used = user_info_after['used_quota']
+					b_q = user_info_before['quota']
+					b_u = user_info_before['used_quota']
+					immediate_reward = round((current_quota + current_used) - (b_q + b_u), 2)
+					immediate_usage = round(current_used - b_u, 2)
+					immediate_change = round(current_quota - b_q, 2)
 
-					total_before = before_quota + before_used
-					total_after = after_quota + after_used
+				history_record = last_balance_history.get(account_name)
 
-					check_in_reward = total_after - total_before
-					usage_increase = after_used - before_used
-					balance_change = after_quota - before_quota
+				if immediate_reward != 0 or immediate_usage != 0:
+					before_q = user_info_before['quota']
+					before_u = user_info_before['used_quota']
+					reward = immediate_reward
+					usage = immediate_usage
+					change = immediate_change
+					is_history_diff = False
+				elif history_record:
+					hist_q = float(history_record.get('quota', current_quota))
+					hist_u = float(history_record.get('used', current_used))
+					hist_reward = round((current_quota + current_used) - (hist_q + hist_u), 2)
+					hist_usage = round(current_used - hist_u, 2)
+					hist_change = round(current_quota - hist_q, 2)
 
-					account_check_in_details[account_key] = {
-						'name': account.get_display_name(i),
-						'before_quota': before_quota,
-						'before_used': before_used,
-						'after_quota': after_quota,
-						'after_used': after_used,
-						'check_in_reward': check_in_reward,
-						'usage_increase': usage_increase,
-						'balance_change': balance_change,
-						'success': success,
-					}
+					if hist_reward > 0 or hist_usage > 0:
+						before_q = hist_q
+						before_u = hist_u
+						reward = hist_reward
+						usage = hist_usage
+						change = hist_change
+						is_history_diff = True
+					else:
+						before_q = current_quota
+						before_u = current_used
+						reward = 0.0
+						usage = 0.0
+						change = 0.0
+						is_history_diff = False
+				else:
+					before_q = current_quota
+					before_u = current_used
+					reward = 0.0
+					usage = 0.0
+					change = 0.0
+					is_history_diff = False
+
+				account_check_in_details[account_key] = {
+					'name': account_name,
+					'provider': account.provider,
+					'needs_manual_check_in': provider_config.needs_manual_check_in() if provider_config else True,
+					'before_quota': before_q,
+					'before_used': before_u,
+					'after_quota': current_quota,
+					'after_used': current_used,
+					'check_in_reward': reward,
+					'usage_increase': usage,
+					'balance_change': change,
+					'is_history_diff': is_history_diff,
+					'success': success,
+				}
 
 			if should_notify_this_account:
 				account_name = account.get_display_name(i)
@@ -574,11 +652,29 @@ async def main():
 			need_notify = True
 			notification_content.append(f'[FAIL] {account_name} exception: {str(e)[:50]}...')
 
+	# 保存最新历史快照
+	new_history = dict(last_balance_history)
+	for i, account in enumerate(accounts):
+		account_key = f'account_{i + 1}'
+		if account_key in account_check_in_details:
+			detail = account_check_in_details[account_key]
+			new_history[detail['name']] = {
+				'quota': detail['after_quota'],
+				'used': detail['after_used'],
+				'updated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+			}
+	save_balance_history(new_history)
+
 	current_balance_hash = generate_balance_hash(current_balances) if current_balances else None
 	notify_always_str = os.getenv('NOTIFY_ALWAYS', 'false').strip().lower()
 	notify_always = notify_always_str in ('true', '1', 'yes', 'on')
 	if notify_always:
 		print('[NOTIFY] NOTIFY_ALWAYS is enabled, will force notification on every run')
+
+	if any(d['check_in_reward'] != 0 or d['usage_increase'] != 0 for d in account_check_in_details.values()):
+		balance_changed = True
+		need_notify = True
+		print('[NOTIFY] Balance/usage changes detected from details, will send notification')
 
 	if current_balance_hash:
 		if last_balance_hash is None:

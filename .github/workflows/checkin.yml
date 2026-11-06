@@ -1,7 +1,8 @@
 name: AnyRouter 自动签到
 on:
   schedule:
-    - cron: '0 */6 * * *'
+    - cron: '30 23 * * *'  # 每天早晨 07:30 (北京时间 UTC+8)
+    - cron: '0 12 * * *'   # 每天晚上 20:00 (北京时间 UTC+8)
   workflow_dispatch:
     inputs:
       debug:
@@ -66,9 +67,13 @@ jobs:
     - name: 恢复余额历史缓存
       uses: actions/cache@v5
       with:
-        path: balance_hash.txt
-        key: balance-hash-${{ github.ref_name }}-${{ github.run_id }}
+        path: |
+          balance_history.json
+          balance_hash.txt
+        key: balance-history-${{ github.ref_name }}-${{ github.run_id }}
         restore-keys: |
+          balance-history-${{ github.ref_name }}-
+          balance-history-
           balance-hash-${{ github.ref_name }}-
           balance-hash-
 
